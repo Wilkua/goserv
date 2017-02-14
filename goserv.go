@@ -3,7 +3,10 @@ package main
 import (
     "bytes"
     "fmt"
+    "io/ioutil"
     "net"
+    "os"
+    "strconv"
     "strings"
     "time"
 )
@@ -19,10 +22,10 @@ type RequestData struct {
 
 type ResponseData struct {
     body string
-    code uint
-    codeText string
+    code string
     headers map[string]string
     protocol string
+    reason string
 }
 
 // ReadRequestData reads the input stream from a connection and parses the data
@@ -62,10 +65,8 @@ func ReadRequestData(conn net.Conn) RequestData {
     ret.protocol = protocol
 
     headers := make(map[string]string)
-    counter := 0
     // continueLine := ""
     for {
-        counter++
         nextIndex := bytes.Index(rawRequestData[lastIndex:], []byte{13, 10})
         if nextIndex == -1 {
             // We hit a read boundary and the headers cross it
@@ -107,10 +108,13 @@ func BuildResponseBuffer(response ResponseData) []byte {
     var ret []byte
     ret = append(ret, []byte(response.protocol)...) // HTTP1.1
     ret = append(ret, []byte(" ")...)
-    ret = append(ret, []byte(string(response.code))...) // 200
-    ret = append(ret, []byte(response.codeText)...) // OK
+    ret = append(ret, []byte(response.code)...) // 200
+    ret = append(ret, []byte(response.reason)...) // OK
+    ret = append(ret, []byte("\r\n")...)
     
-    response.headers["content-length"] = string(len(response.body))
+    response.headers["content-length"] = strconv.Itoa(len(response.body))
+    response.headers["server"] = "goserv 1.0-alpha"
+
     for key, value := range(response.headers) {
         ret = append(ret, []byte(key)...)
         ret = append(ret, []byte(": ")...)
@@ -122,24 +126,64 @@ func BuildResponseBuffer(response ResponseData) []byte {
     return ret
 }
 
+// GetFileContents reads the entire contents of a file given by the file path and returns it in a byte slice.
+func GetFileContents(filePath string) []byte {
+    file, err := os.Open(filePath)
+    if err != nil {
+        return nil
+    }
+    defer file.Close()
+
+    fileData, err := ioutil.ReadAll(file)
+    if err != nil {
+        return nil
+    }
+
+    return fileData
+}
+
 func HandleConnection(conn net.Conn) {
     defer conn.Close()
 
     request := ReadRequestData(conn)
 
     var response ResponseData
-    response.code = 200
-    response.codeText = "OK"
-    response.protocol = request.protocol
+    response.headers = make(map[string]string)
+    
+    // BUG(wilkua) Request paths need to be checked by prepending the working directory to the request path,
+    //             resolving, and then checking if the path is valid.
+    filePath := request.path
+    if filePath == "/" {
+        filePath = "/index.html"
+    }
+    // BUG(wilkua) A simple concatenation of "." to the front of the file path is possibly neither safe nor
+    //             efficient.
+    filePath = "." + filePath
+    fileContents := GetFileContents(filePath)
+
+    if fileContents != nil {
+        // response.body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Goserv</title></head><body><h1>Goserv</h1><p>A simple HTTP server written in Go!</p></body></html>"
+        response.body = string(fileContents)
+        response.headers["content-type"] = "text/html"
+        response.code = "200"
+        response.reason = "Ok"
+        response.protocol = request.protocol
+    } else {
+        response.body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Goserv</title></head><body><h1>Oops!</h1><p>We couldn't find the file you asked for.</p></body></html>"
+        response.headers["content-type"] = "text/html"
+        response.code = "404"
+        response.reason = "Not Found"
+        response.protocol = request.protocol
+    }
 
     conn.Write(BuildResponseBuffer(response))
 
-    // 127.0.0.1 - - [2017/02/08T19:28:31Z] "GET / HTTP/1.0" 200 1545
-    fmt.Printf("%s %s %s [%s] \"%s %s %s\" %d %d\n", 
+    // 127.0.0.1 - - [2017-02-08T19:28:31Z] "GET / HTTP/1.0" 200 1545
+    fmt.Printf("%s %s %s [%s] \"%s %s %s\" %s %d\n", 
         conn.RemoteAddr(),
         "-",
         "-",
-        time.Now().UTC().Format("2006/01/02T15:04:05Z"),
+        time.Now().UTC().Format("2006-01-02T15:04:05Z"),
         request.method,
         request.path,
         request.protocol,
