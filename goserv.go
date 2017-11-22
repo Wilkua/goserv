@@ -4,8 +4,10 @@ import (
     "bytes"
     "fmt"
     "io/ioutil"
+    "mime"
     "net"
     "os"
+    "path"
     "strconv"
     "strings"
     "time"
@@ -164,7 +166,7 @@ func HandleConnection(conn net.Conn) {
     if fileContents != nil {
         // response.body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Goserv</title></head><body><h1>Goserv</h1><p>A simple HTTP server written in Go!</p></body></html>"
         response.body = string(fileContents)
-        response.headers["content-type"] = "text/html"
+        response.headers["content-type"] = mime.TypeByExtension(path.Ext(filePath))
         response.code = "200"
         response.reason = "Ok"
         response.protocol = request.protocol
