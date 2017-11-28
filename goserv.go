@@ -144,7 +144,7 @@ func GetFileContents(filePath string) []byte {
     return fileData
 }
 
-func HandleConnection(conn net.Conn) {
+func HandleConnection(conn net.Conn, logChan chan<- string) {
     defer conn.Close()
 
     request := ReadRequestData(conn)
@@ -180,8 +180,7 @@ func HandleConnection(conn net.Conn) {
 
     conn.Write(BuildResponseBuffer(response))
 
-    // 127.0.0.1 - - [2017-02-08T19:28:31Z] "GET / HTTP/1.0" 200 1545
-    fmt.Printf("%s %s %s [%s] \"%s %s %s\" %s %d\n", 
+    logChan <- fmt.Sprintf("%s %s %s [%s] \"%s %s %s\" %s %d",
         conn.RemoteAddr(),
         "-",
         "-",
@@ -194,18 +193,27 @@ func HandleConnection(conn net.Conn) {
 }
 
 func main() {
+    logChan := make(chan string, 500)
+
+    // Start logger listening on the channel
+    go func() {
+        for {
+            fmt.Println(<-logChan)
+        }
+    }()
+
     ln, err := net.Listen("tcp", ":8080")
     if err != nil {
         fmt.Println("Failed to bind to port 8080")
         return
     }
-    fmt.Println("\nServer started on port 8080")
+    logChan <- "\nServer started on port 8080"
     for {
         conn, err := ln.Accept()
         if err == nil {
-            go HandleConnection(conn)
+            go HandleConnection(conn, logChan)
         } else {
-            fmt.Println("Error while receiving connection")
+            logChan <- "Error while receiving connection"
         }
     }
 }
